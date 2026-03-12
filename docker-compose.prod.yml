@@ -24,13 +24,17 @@ services:
       - postgis
 
   sync-app:
-    image: ghcr.io/reedu-reengineering-education/atrai-bike-data-sync:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
     container_name: sensor-data-sync-app-prod
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgis:5432/${POSTGRES_DB:-sensor_data}
       GROUPTAGS: ${GROUPTAGS:-atrai}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+      SYNC_SCHEDULE: ${SYNC_SCHEDULE:-0 3 * * *}
     depends_on:
       - postgis
     restart: "unless-stopped"
