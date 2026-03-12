@@ -34,67 +34,70 @@ class DatabaseManager:
         Creates:
             - osem_bike_data table with all sensor columns
             - sync_state table for tracking synchronization
-            - indexes on boxid and timestamp columns
+            - indexes on boxId and createdAt columns
+            
+        NOTE: Column names match OpenSenseMapToolbox output format for 
+        compatibility with existing pygeoapi processes.
         """
         conn = self.pool.getconn()
         try:
             with conn.cursor() as cursor:
-                # Create osem_bike_data table
+                # Create osem_bike_data table with OpenSenseMapToolbox-compatible column names
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS osem_bike_data (
-                        id SERIAL PRIMARY KEY,
-                        boxid VARCHAR(255) NOT NULL,
-                        boxname VARCHAR(255) NOT NULL,
-                        grouptags TEXT,
-                        timestamp TIMESTAMP NOT NULL,
+                        index SERIAL PRIMARY KEY,
+                        "boxId" VARCHAR(255) NOT NULL,
+                        "boxName" VARCHAR(255) NOT NULL,
+                        "groupTags" TEXT,
+                        "createdAt" TIMESTAMP NOT NULL,
                         longitude DOUBLE PRECISION,
                         latitude DOUBLE PRECISION,
-                        temperature DOUBLE PRECISION,
-                        humidity DOUBLE PRECISION,
-                        pm1 DOUBLE PRECISION,
-                        pm2_5 DOUBLE PRECISION,
-                        pm4 DOUBLE PRECISION,
-                        pm10 DOUBLE PRECISION,
-                        overtaking_distance DOUBLE PRECISION,
-                        overtaking_maneuvre INTEGER,
-                        standing INTEGER,
-                        asphalt INTEGER,
-                        compacted INTEGER,
-                        paving INTEGER,
-                        sett INTEGER,
-                        speed DOUBLE PRECISION,
-                        distance_right DOUBLE PRECISION,
-                        geom geometry(Point, 4326),
+                        "Temperature" DOUBLE PRECISION,
+                        "Rel. Humidity" DOUBLE PRECISION,
+                        "Finedust PM1" DOUBLE PRECISION,
+                        "Finedust PM2.5" DOUBLE PRECISION,
+                        "Finedust PM4" DOUBLE PRECISION,
+                        "Finedust PM10" DOUBLE PRECISION,
+                        "Overtaking Distance" DOUBLE PRECISION,
+                        "Overtaking Manoeuvre" INTEGER,
+                        "Standing" INTEGER,
+                        "Surface Asphalt" INTEGER,
+                        "Surface Compacted" INTEGER,
+                        "Surface Paving" INTEGER,
+                        "Surface Sett" INTEGER,
+                        "Speed" DOUBLE PRECISION,
+                        "Distance Right" DOUBLE PRECISION,
+                        geometry geometry(Point, 4326),
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(boxid, timestamp)
+                        UNIQUE("boxId", "createdAt")
                     );
                 """)
                 
                 # Create indexes on osem_bike_data table
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_osem_bike_data_boxid 
-                    ON osem_bike_data(boxid);
+                    ON osem_bike_data("boxId");
                 """)
                 
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_osem_bike_data_timestamp 
-                    ON osem_bike_data(timestamp);
+                    ON osem_bike_data("createdAt");
                 """)
                 
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_osem_bike_data_boxid_timestamp 
-                    ON osem_bike_data(boxid, timestamp);
+                    ON osem_bike_data("boxId", "createdAt");
                 """)
                 
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_osem_bike_data_geom 
-                    ON osem_bike_data USING GIST (geom);
+                    ON osem_bike_data USING GIST (geometry);
                 """)
                 
                 # Create sync_state table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS sync_state (
-                        boxid VARCHAR(255) PRIMARY KEY,
+                        "boxId" VARCHAR(255) PRIMARY KEY,
                         latest_sync_date DATE NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
@@ -110,7 +113,7 @@ class DatabaseManager:
         
         Uses ON CONFLICT DO UPDATE to merge multiple phenomena into the same row.
         This allows multiple sensor readings (temperature, humidity, etc.) to be
-        combined into a single measurement record per (boxid, timestamp).
+        combined into a single measurement record per (boxId, createdAt).
         
         Args:
             measurements: List of Measurement objects
@@ -126,39 +129,40 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 # Prepare the INSERT statement with ON CONFLICT DO UPDATE
                 # This will merge multiple phenomena into the same row
+                # Column names match OpenSenseMapToolbox output format
                 insert_query = """
                     INSERT INTO osem_bike_data (
-                        boxid, boxname, grouptags, timestamp, longitude, latitude,
-                        temperature, humidity, pm1, pm2_5, pm4, pm10,
-                        overtaking_distance, overtaking_maneuvre, standing,
-                        asphalt, compacted, paving, sett, speed, distance_right, geom
+                        "boxId", "boxName", "groupTags", "createdAt", longitude, latitude,
+                        "Temperature", "Rel. Humidity", "Finedust PM1", "Finedust PM2.5", "Finedust PM4", "Finedust PM10",
+                        "Overtaking Distance", "Overtaking Manoeuvre", "Standing",
+                        "Surface Asphalt", "Surface Compacted", "Surface Paving", "Surface Sett", "Speed", "Distance Right", geometry
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         CASE WHEN %s IS NOT NULL AND %s IS NOT NULL 
                              THEN ST_SetSRID(ST_MakePoint(%s, %s), 4326) 
                              ELSE NULL END
                     )
-                    ON CONFLICT (boxid, timestamp) DO UPDATE SET
-                        boxname = COALESCE(EXCLUDED.boxname, osem_bike_data.boxname),
-                        grouptags = COALESCE(EXCLUDED.grouptags, osem_bike_data.grouptags),
+                    ON CONFLICT ("boxId", "createdAt") DO UPDATE SET
+                        "boxName" = COALESCE(EXCLUDED."boxName", osem_bike_data."boxName"),
+                        "groupTags" = COALESCE(EXCLUDED."groupTags", osem_bike_data."groupTags"),
                         longitude = COALESCE(EXCLUDED.longitude, osem_bike_data.longitude),
                         latitude = COALESCE(EXCLUDED.latitude, osem_bike_data.latitude),
-                        temperature = COALESCE(EXCLUDED.temperature, osem_bike_data.temperature),
-                        humidity = COALESCE(EXCLUDED.humidity, osem_bike_data.humidity),
-                        pm1 = COALESCE(EXCLUDED.pm1, osem_bike_data.pm1),
-                        pm2_5 = COALESCE(EXCLUDED.pm2_5, osem_bike_data.pm2_5),
-                        pm4 = COALESCE(EXCLUDED.pm4, osem_bike_data.pm4),
-                        pm10 = COALESCE(EXCLUDED.pm10, osem_bike_data.pm10),
-                        overtaking_distance = COALESCE(EXCLUDED.overtaking_distance, osem_bike_data.overtaking_distance),
-                        overtaking_maneuvre = COALESCE(EXCLUDED.overtaking_maneuvre, osem_bike_data.overtaking_maneuvre),
-                        standing = COALESCE(EXCLUDED.standing, osem_bike_data.standing),
-                        asphalt = COALESCE(EXCLUDED.asphalt, osem_bike_data.asphalt),
-                        compacted = COALESCE(EXCLUDED.compacted, osem_bike_data.compacted),
-                        paving = COALESCE(EXCLUDED.paving, osem_bike_data.paving),
-                        sett = COALESCE(EXCLUDED.sett, osem_bike_data.sett),
-                        speed = COALESCE(EXCLUDED.speed, osem_bike_data.speed),
-                        distance_right = COALESCE(EXCLUDED.distance_right, osem_bike_data.distance_right),
-                        geom = COALESCE(EXCLUDED.geom, osem_bike_data.geom);
+                        "Temperature" = COALESCE(EXCLUDED."Temperature", osem_bike_data."Temperature"),
+                        "Rel. Humidity" = COALESCE(EXCLUDED."Rel. Humidity", osem_bike_data."Rel. Humidity"),
+                        "Finedust PM1" = COALESCE(EXCLUDED."Finedust PM1", osem_bike_data."Finedust PM1"),
+                        "Finedust PM2.5" = COALESCE(EXCLUDED."Finedust PM2.5", osem_bike_data."Finedust PM2.5"),
+                        "Finedust PM4" = COALESCE(EXCLUDED."Finedust PM4", osem_bike_data."Finedust PM4"),
+                        "Finedust PM10" = COALESCE(EXCLUDED."Finedust PM10", osem_bike_data."Finedust PM10"),
+                        "Overtaking Distance" = COALESCE(EXCLUDED."Overtaking Distance", osem_bike_data."Overtaking Distance"),
+                        "Overtaking Manoeuvre" = COALESCE(EXCLUDED."Overtaking Manoeuvre", osem_bike_data."Overtaking Manoeuvre"),
+                        "Standing" = COALESCE(EXCLUDED."Standing", osem_bike_data."Standing"),
+                        "Surface Asphalt" = COALESCE(EXCLUDED."Surface Asphalt", osem_bike_data."Surface Asphalt"),
+                        "Surface Compacted" = COALESCE(EXCLUDED."Surface Compacted", osem_bike_data."Surface Compacted"),
+                        "Surface Paving" = COALESCE(EXCLUDED."Surface Paving", osem_bike_data."Surface Paving"),
+                        "Surface Sett" = COALESCE(EXCLUDED."Surface Sett", osem_bike_data."Surface Sett"),
+                        "Speed" = COALESCE(EXCLUDED."Speed", osem_bike_data."Speed"),
+                        "Distance Right" = COALESCE(EXCLUDED."Distance Right", osem_bike_data."Distance Right"),
+                        geometry = COALESCE(EXCLUDED.geometry, osem_bike_data.geometry);
                 """
                 
                 # Prepare data tuples (longitude/latitude repeated for geom construction)
@@ -168,7 +172,7 @@ class DatabaseManager:
                         m.temperature, m.humidity, m.pm1, m.pm2_5, m.pm4, m.pm10,
                         m.overtaking_distance, m.overtaking_maneuvre, m.standing,
                         m.asphalt, m.compacted, m.paving, m.sett, m.speed, m.distance_right,
-                        m.longitude, m.latitude, m.longitude, m.latitude  # for geom CASE WHEN and ST_MakePoint
+                        m.longitude, m.latitude, m.longitude, m.latitude  # for geometry CASE WHEN and ST_MakePoint
                     )
                     for m in measurements
                 ]
@@ -202,7 +206,7 @@ class DatabaseManager:
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    "SELECT latest_sync_date FROM sync_state WHERE boxid = %s;",
+                    """SELECT latest_sync_date FROM sync_state WHERE "boxId" = %s;""",
                     (box_id,)
                 )
                 result = cursor.fetchone()
@@ -223,9 +227,9 @@ class DatabaseManager:
             with conn.cursor() as cursor:
                 # Use INSERT ... ON CONFLICT UPDATE to handle both insert and update
                 cursor.execute("""
-                    INSERT INTO sync_state (boxid, latest_sync_date, updated_at)
+                    INSERT INTO sync_state ("boxId", latest_sync_date, updated_at)
                     VALUES (%s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT (boxid) 
+                    ON CONFLICT ("boxId") 
                     DO UPDATE SET 
                         latest_sync_date = EXCLUDED.latest_sync_date,
                         updated_at = CURRENT_TIMESTAMP;

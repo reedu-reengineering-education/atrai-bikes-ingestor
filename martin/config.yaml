@@ -15,35 +15,37 @@ postgres:
       srid: 4326
 
       # Geometry column name (required)
-      geometry_column: geom
+      # NOTE: Column name matches OpenSenseMapToolbox format for pygeoapi compatibility
+      geometry_column: geometry
 
       # Feature id column name
-      id_column: id
+      id_column: index
 
       # Geometry type
       geometry_type: GEOMETRY
 
       # List of columns, that should be encoded as tile properties (required)
+      # NOTE: Column names match OpenSenseMapToolbox output format for pygeoapi compatibility
       properties:
-        boxid: string
-        boxname: string
-        grouptags: string
-        timestamp: timestamp
-        temperature: number
-        humidity: number
-        pm1: number
-        pm2_5: number
-        pm4: number
-        pm10: number
-        overtaking_distance: number
-        overtaking_maneuvre: number
-        standing: number
-        asphalt: number
-        compacted: number
-        paving: number
-        sett: number
-        speed: number
-        distance_right: number
+        boxId: string
+        boxName: string
+        groupTags: string
+        createdAt: timestamp
+        Temperature: number
+        Rel. Humidity: number
+        Finedust PM1: number
+        Finedust PM2.5: number
+        Finedust PM4: number
+        Finedust PM10: number
+        Overtaking Distance: number
+        Overtaking Manoeuvre: number
+        Standing: number
+        Surface Asphalt: number
+        Surface Compacted: number
+        Surface Paving: number
+        Surface Sett: number
+        Speed: number
+        Distance Right: number
         created_at: timestamp
         longitude: number
         latitude: number
