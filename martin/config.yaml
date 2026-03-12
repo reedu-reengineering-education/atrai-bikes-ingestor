@@ -1,0 +1,49 @@
+postgres:
+  connection_string: $DATABASE_URL
+
+  tables:
+    osem_bike_data:
+      layer_id: osem_bike_data
+
+      # Table schema (required)
+      schema: public
+
+      # Table name (required)
+      table: osem_bike_data
+
+      # Geometry SRID (required)
+      srid: 4326
+
+      # Geometry column name (required)
+      geometry_column: geom
+
+      # Feature id column name
+      id_column: id
+
+      # Geometry type
+      geometry_type: GEOMETRY
+
+      # List of columns, that should be encoded as tile properties (required)
+      properties:
+        boxid: string
+        boxname: string
+        grouptags: string
+        timestamp: timestamp
+        temperature: number
+        humidity: number
+        pm1: number
+        pm2_5: number
+        pm4: number
+        pm10: number
+        overtaking_distance: number
+        overtaking_maneuvre: number
+        standing: number
+        asphalt: number
+        compacted: number
+        paving: number
+        sett: number
+        speed: number
+        distance_right: number
+        created_at: timestamp
+        longitude: number
+        latitude: number

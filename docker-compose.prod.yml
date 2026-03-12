@@ -1,0 +1,42 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: sensor-data-postgis-prod
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sensor_data}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgis_data_prod:/var/lib/postgresql/data
+    restart: always
+
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgis:5432/${POSTGRES_DB:-sensor_data}
+    volumes:
+      - ./martin:/config
+    command: ["--config=/config/config.yaml", "--webui", "enable-for-all"]
+    depends_on:
+      - postgis
+
+  sync-app:
+    image: ghcr.io/reedu-reengineering-education/atrai-bike-data-sync:latest
+    container_name: sensor-data-sync-app-prod
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgis:5432/${POSTGRES_DB:-sensor_data}
+      GROUPTAGS: ${GROUPTAGS:-atrai}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+    depends_on:
+      - postgis
+    restart: "unless-stopped"
+
+volumes:
+  postgis_data_prod:
+    # Optional: Enable encryption for production
+    # driver_opts:
+    #   encrypted: "true"

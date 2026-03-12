@@ -1,0 +1,29 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: sensor-data-postgis-dev
+    environment:
+      POSTGRES_DB: sensor_data
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data_dev:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://postgres:password@postgis:5432/sensor_data
+    volumes:
+      - ./martin:/config
+    command: ["--config=/config/config.yaml", "--webui", "enable-for-all"]
+    depends_on:
+      - postgis
+
+volumes:
+  postgis_data_dev:
