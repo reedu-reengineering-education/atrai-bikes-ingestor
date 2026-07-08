@@ -16,7 +16,8 @@ RUN uv sync --frozen --no-dev
 
 # Application code
 COPY src/        ./src/
-COPY campaigns.yml migrations/ run_migration.py entrypoint.sh run_scheduler.py ./
+COPY campaigns.yml run_migration.py entrypoint.sh run_scheduler.py ./
+COPY migrations/ ./migrations/
 
 # Put the venv on PATH so `uvicorn`, `python`, etc. resolve without `uv run`
 ENV PATH="/app/.venv/bin:$PATH"

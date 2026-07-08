@@ -22,8 +22,6 @@ services:
     command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${APP_PORT:-8000}:8000"
-    volumes:
-      - ./campaigns.yml:/app/campaigns.yml:ro
     environment:
       DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgis:5432/${DATABASE_NAME}
       GROUPTAGS: ${GROUPTAGS}
