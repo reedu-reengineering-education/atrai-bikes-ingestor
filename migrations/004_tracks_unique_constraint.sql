@@ -12,6 +12,13 @@ WHERE id NOT IN (
 DELETE FROM track_points
 WHERE track_id NOT IN (SELECT id FROM tracks);
 
-ALTER TABLE tracks
-    ADD CONSTRAINT IF NOT EXISTS tracks_box_time_unique
-    UNIQUE ("boxId", "startTime", "endTime");
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'tracks_box_time_unique'
+    ) THEN
+        ALTER TABLE tracks
+            ADD CONSTRAINT tracks_box_time_unique
+            UNIQUE ("boxId", "startTime", "endTime");
+    END IF;
+END $$;
