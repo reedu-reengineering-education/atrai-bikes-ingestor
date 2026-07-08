@@ -89,6 +89,13 @@ class Distances(AtraiProcessor):
             filtered_data = atrai_bike_data.copy()
             filtered_data["createdAt"] = pd.to_datetime(filtered_data["createdAt"])
             filtered_data = filtered_data.dropna(subset=["Overtaking Distance"])
+
+            if filtered_data.empty:
+                outputs = {
+                    "id": "distances_flowmap",
+                    "status": "skipped — no Overtaking Distance data available for this campaign"
+                }
+                return self.mimetype, outputs
             filtered_data = filtered_data[
                 (filtered_data["Overtaking Manoeuvre"] > 0.5) &
                 (filtered_data["Overtaking Distance"] > 25)

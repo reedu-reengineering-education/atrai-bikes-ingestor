@@ -73,6 +73,15 @@ class DangerousPlaces(AtraiProcessor):
         atrai_bike_data['lng'] = atrai_bike_data['geometry'].x
         atrai_bike_data['lat'] = atrai_bike_data['geometry'].y
 
+        # Require at least some overtaking data — skip gracefully if sensors not present
+        if (atrai_bike_data.get('Overtaking Manoeuvre') is None or
+                atrai_bike_data['Overtaking Manoeuvre'].dropna().empty):
+            outputs = {
+                'id': 'dangerous_places',
+                'status': 'skipped — no Overtaking Manoeuvre data available for this campaign'
+            }
+            return self.mimetype, outputs
+
         device_counts = atrai_bike_data.groupby('boxId').size()
         valid_device_ids = device_counts[device_counts >= 10].index
         atrai_bike_data = atrai_bike_data[atrai_bike_data['boxId'].isin(valid_device_ids)]

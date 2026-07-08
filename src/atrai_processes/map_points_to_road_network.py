@@ -89,14 +89,14 @@ def map_points_to_road_segments(
     new_columns = {
         f"{col}_mean": f"Average {col}" for col in numeric_columns
     }
-    new_columns[f"{distance_col}_mean"] = "Average Distance to Road[m]"
+    new_columns[f"{distance_col}_mean"] = "Average Distance to Road m"
     new_columns[f"{id_column}_count"] = "Number of Points"
     new_columns['boxId_nunique'] = "Number of Boxes"
 
     if o_dist:
-        new_columns['Overtaking Distance_mean'] = 'Average Overtaking Distance[cm]'
+        new_columns['Overtaking Distance_mean'] = 'Average Overtaking Distance cm'
         new_columns['Overtaking Distance_histo'] = 'Overtaking Distance Counts'
-        new_columns['Overtaking Manoeuvre_mean'] = 'Average Overtaking Manoeuvre[%]'
+        new_columns['Overtaking Manoeuvre_mean'] = 'Average Overtaking Manoeuvre pct'
     aggregated = aggregated.rename(columns=new_columns)
 
     #TODO just use another func at this point?

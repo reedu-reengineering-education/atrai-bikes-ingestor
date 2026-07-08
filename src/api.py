@@ -368,9 +368,12 @@ def _call_process(proc_name: str, campaign: str, token: str, campaigns_cfg: dict
 _ANALYSIS_TABLE_PREFIXES = (
     "bumpy_roads_",
     "danger_zones_",
+    "danger_zones_PM_",
     "overtaking_distance_",
     "road_network_",
     "bike_road_network_",
+    "speed_map_",
+    "traffic_flow_",
     "speed_traffic_flow_",
     "statistics",
     "tracks",
