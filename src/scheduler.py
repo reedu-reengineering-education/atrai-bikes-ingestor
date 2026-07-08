@@ -129,22 +129,19 @@ def sync_sensor_data_job() -> Dict[str, Any]:
         tracks_stored = track_processor.process()
         logger.info(f"Track processing completed. Stored {tracks_stored} tracks")
 
-        # Trigger analysis pipeline via pygeoapi for each synced grouptag
-        pygeoapi_url = os.getenv("PYGEOAPI_URL", "")
+        # Trigger analysis pipeline via the API for each synced grouptag
+        api_url = os.getenv("PYGEOAPI_URL", "")  # reusing env var; points to the app service
         int_api_token = os.getenv("INT_API_TOKEN", "")
-        if pygeoapi_url and int_api_token:
+        if api_url and int_api_token:
             import requests as req
             logger.info(f"Triggering analysis pipeline for grouptags: {grouptags}")
             for grouptag in grouptags:
                 try:
                     resp = req.post(
-                        f"{pygeoapi_url}/processes/data_ingestion/execution?f=json",
+                        f"{api_url}/analyze",
                         json={
-                            "inputs": {
-                                "token": int_api_token,
-                                "campaigns": [grouptag],
-                                "processes": "all",
-                            }
+                            "campaigns": [grouptag],
+                            "processes": "all",
                         },
                         timeout=7200,
                     )
