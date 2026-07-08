@@ -1,11 +1,20 @@
-#!/bin/sh
-# Generate crontab from environment and start supercronic
+#!/bin/bash
+# App entrypoint: wait for the database, run migrations, then start the process
+# passed as arguments (CMD from Dockerfile / docker-compose command:).
+set -e
 
-SYNC_SCHEDULE="${SYNC_SCHEDULE:-0 3 * * *}"
+echo "Waiting for database..."
+until python - <<'PY' 2>/dev/null
+import os, psycopg2
+psycopg2.connect(os.environ["DATABASE_URL"]).close()
+PY
+do
+  sleep 2
+done
+echo "Database ready."
 
-echo "# Sensor data sync cron schedule" > /app/crontab
-echo "# Schedule: $SYNC_SCHEDULE" >> /app/crontab
-echo "$SYNC_SCHEDULE /usr/bin/sh -c 'cd /app && /root/.local/bin/uv run python -m src.scheduler'" >> /app/crontab
+echo "Running migrations..."
+python run_migration.py
 
-echo "Starting supercronic with schedule: $SYNC_SCHEDULE"
-exec supercronic /app/crontab
+echo "Starting: $*"
+exec "$@"

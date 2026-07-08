@@ -1,0 +1,48 @@
+# Campaign configuration
+# Maps grouptag names (from OpenSenseMap) to campaign-specific settings.
+# road_network: list of place dicts passed to OSMNX graph_from_place() for
+# importing the bicycle road network from OpenStreetMap.
+# Add a new entry here whenever a new grouptag/campaign is activated.
+campaigns:
+  atrai:
+    road_network:
+      - city: Münster
+        country: Germany
+
+  heilbronn:
+    road_network:
+      - city: Heilbronn
+        country: Germany
+
+  lauds_26:
+    road_network:
+      - city: Nancy
+        country: France
+
+  arnsberg:
+    road_network:
+      - city: Arnsberg
+        county: Hochsauerlandkreis
+        country: Germany
+
+  muenster:
+    road_network:
+      - city: Münster
+        country: Germany
+
+  greifswald:
+    road_network:
+      - city: Greifswald
+        country: Germany
+
+  wiesbaden:
+    road_network:
+      - city: Wiesbaden
+        country: Germany
+      - city: Mainz
+        country: Germany
+
+  saopaulo:
+    road_network:
+      - city: Sao Paulo
+        country: Brazil

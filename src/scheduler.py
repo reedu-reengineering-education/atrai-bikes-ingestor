@@ -120,7 +120,45 @@ def sync_sensor_data_job() -> Dict[str, Any]:
         # Run sync job (Requirement 7.3)
         logger.info("Starting synchronization process...")
         coordinator.run_sync_job()
+        logger.info("Synchronization process completed")
         
+        # Run track processing
+        logger.info("Starting track processing...")
+        from src.track_processor import TrackProcessor
+        track_processor = TrackProcessor(database_url)
+        tracks_stored = track_processor.process()
+        logger.info(f"Track processing completed. Stored {tracks_stored} tracks")
+
+        # Trigger analysis pipeline via pygeoapi for each synced grouptag
+        pygeoapi_url = os.getenv("PYGEOAPI_URL", "")
+        int_api_token = os.getenv("INT_API_TOKEN", "")
+        if pygeoapi_url and int_api_token:
+            import requests as req
+            logger.info(f"Triggering analysis pipeline for grouptags: {grouptags}")
+            for grouptag in grouptags:
+                try:
+                    resp = req.post(
+                        f"{pygeoapi_url}/processes/data_ingestion/execution?f=json",
+                        json={
+                            "inputs": {
+                                "token": int_api_token,
+                                "campaigns": [grouptag],
+                                "processes": "all",
+                            }
+                        },
+                        timeout=7200,
+                    )
+                    resp.raise_for_status()
+                    logger.info(f"Analysis pipeline triggered for grouptag '{grouptag}'")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to trigger analysis for grouptag '{grouptag}': {e}"
+                    )
+        else:
+            logger.info(
+                "PYGEOAPI_URL or INT_API_TOKEN not set — skipping analysis trigger"
+            )
+
         # Calculate execution time
         end_time = datetime.now(timezone.utc)
         duration = (end_time - start_time).total_seconds()

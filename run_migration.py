@@ -35,20 +35,21 @@ def run_migration(migration_file: str):
     
     print(f"Running migration: {migration_file}")
     print("-" * 60)
-    
+
     # Connect to database and run migration
+    conn = None
     try:
         conn = psycopg2.connect(database_url)
         conn.autocommit = False
-        
+
         with conn.cursor() as cursor:
             # Execute migration
             cursor.execute(migration_sql)
-            
+
             # Commit transaction
             conn.commit()
             print("✓ Migration completed successfully")
-            
+
     except Exception as e:
         if conn:
             conn.rollback()

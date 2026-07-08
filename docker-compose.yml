@@ -1,0 +1,80 @@
+services:
+  # ─── Database ───────────────────────────────────────────────────────────────
+  postgis:
+    image: postgis/postgis:17-3.5
+    container_name: atrai_postgis
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-${POSTGRES_USER:-postgres}}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}
+      POSTGRES_DB: ${DATABASE_NAME:-${POSTGRES_DB:-atrai_bikes}}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── App (API + ingestion + analysis) ───────────────────────────────────────
+  app:
+    build: .
+    container_name: atrai_app
+    entrypoint: ["/app/entrypoint.sh"]
+    command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./campaigns.yml:/app/campaigns.yml:ro
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER:-${POSTGRES_USER:-postgres}}:${DATABASE_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}@postgis:5432/${DATABASE_NAME:-${POSTGRES_DB:-atrai_bikes}}
+      GROUPTAGS: ${GROUPTAGS:-atrai}
+      DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+      INT_API_TOKEN: ${INT_API_TOKEN}
+      CAMPAIGNS_CONFIG: /app/campaigns.yml
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Scheduler (periodic sync + analysis trigger) ───────────────────────────
+  # Optional: remove this service if you prefer to trigger POST /sync manually.
+  scheduler:
+    build: .
+    container_name: atrai_scheduler
+    command: ["python", "run_scheduler.py"]
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER:-${POSTGRES_USER:-postgres}}:${DATABASE_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}@postgis:5432/${DATABASE_NAME:-${POSTGRES_DB:-atrai_bikes}}
+      GROUPTAGS: ${GROUPTAGS:-atrai}
+      DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-6}
+      # After sync the scheduler POSTs to the app to trigger analysis:
+      PYGEOAPI_URL: http://app:8000
+      INT_API_TOKEN: ${INT_API_TOKEN}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    restart: unless-stopped
+
+  # ─── Martin (vector tile server) ────────────────────────────────────────────
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    container_name: atrai_martin
+    ports:
+      - "${MARTIN_PORT:-3000}:3000"
+    volumes:
+      - ./martin/config.yaml:/config.yaml:ro
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER:-${POSTGRES_USER:-postgres}}:${DATABASE_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}@postgis:5432/${DATABASE_NAME:-${POSTGRES_DB:-atrai_bikes}}
+    command: ["--config", "/config.yaml"]
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgis_data:

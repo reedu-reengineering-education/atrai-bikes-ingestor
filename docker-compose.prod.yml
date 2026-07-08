@@ -1,46 +1,77 @@
 services:
   postgis:
-    image: postgis/postgis:16-3.4
-    container_name: sensor-data-postgis-prod
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-sensor_data}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    image: postgis/postgis:17-3.5
+    container_name: atrai_postgis
     volumes:
-      - postgis_data_prod:/var/lib/postgresql/data
-    restart: always
+      - postgis_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY}:latest
+    container_name: atrai_app
+    entrypoint: ["/app/entrypoint.sh"]
+    command: ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - ./campaigns.yml:/app/campaigns.yml:ro
+    environment:
+      DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgis:5432/${DATABASE_NAME}
+      GROUPTAGS: ${GROUPTAGS}
+      DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+      INT_API_TOKEN: ${INT_API_TOKEN}
+      CAMPAIGNS_CONFIG: /app/campaigns.yml
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Uncomment to enable periodic background sync + analysis.
+  # Runs every SYNC_INTERVAL_HOURS hours; triggers POST /analyze after each sync.
+  #
+  # scheduler:
+  #   image: ghcr.io/${GITHUB_REPOSITORY}:latest
+  #   container_name: atrai_scheduler
+  #   command: ["python", "run_scheduler.py"]
+  #   environment:
+  #     DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgis:5432/${DATABASE_NAME}
+  #     GROUPTAGS: ${GROUPTAGS}
+  #     DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
+  #     SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-6}
+  #     PYGEOAPI_URL: http://app:8000
+  #     INT_API_TOKEN: ${INT_API_TOKEN}
+  #     LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  #   depends_on:
+  #     postgis:
+  #       condition: service_healthy
+  #     app:
+  #       condition: service_started
+  #   restart: unless-stopped
 
   martin:
     image: ghcr.io/maplibre/martin:latest
-    restart: always
+    container_name: atrai_martin
     ports:
-      - "3000:3000"
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgis:5432/${POSTGRES_DB:-sensor_data}
+      - "${MARTIN_PORT:-3000}:3000"
     volumes:
-      - ./martin:/config
-    command: ["--config=/config/config.yaml", "--webui", "enable-for-all"]
-    depends_on:
-      - postgis
-
-  sync-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: sensor-data-sync-app-prod
+      - ./martin/config.yaml:/config.yaml:ro
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgis:5432/${POSTGRES_DB:-sensor_data}
-      GROUPTAGS: ${GROUPTAGS:-atrai}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
-      SYNC_SCHEDULE: ${SYNC_SCHEDULE:-0 3 * * *}
+      DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@postgis:5432/${DATABASE_NAME}
+    command: ["--config", "/config.yaml"]
     depends_on:
-      - postgis
-    restart: "unless-stopped"
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  postgis_data_prod:
-    # Optional: Enable encryption for production
-    # driver_opts:
-    #   encrypted: "true"
+  postgis_data:

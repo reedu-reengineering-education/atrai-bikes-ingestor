@@ -49,3 +49,53 @@ postgres:
         created_at: timestamp
         longitude: number
         latitude: number
+
+    tracks:
+      layer_id: tracks
+      schema: public
+      table: tracks
+      srid: 4326
+      geometry_column: linestring_geometry
+      id_column: id
+      geometry_type: GEOMETRY
+      properties:
+        boxId: string
+        boxName: string
+        groupTags: string
+        startTime: timestamp
+        endTime: timestamp
+        duration_seconds: number
+        distance_meters: number
+        num_points: integer
+        avg_speed_ms: number
+        max_speed_ms: number
+        avg_temperature: number
+        avg_humidity: number
+        avg_pm25: number
+        avg_pm10: number
+        avg_overtaking_distance: number
+        avg_distance_right: number
+        processed_at: timestamp
+
+    track_points:
+      layer_id: track_points
+      schema: public
+      table: track_points
+      srid: 4326
+      geometry_column: geometry
+      id_column: id
+      geometry_type: GEOMETRY
+      properties:
+        track_id: integer
+        boxId: string
+        timestamp: timestamp
+        sequence: integer
+        longitude: number
+        latitude: number
+        speed_ms: number
+        temperature: number
+        humidity: number
+        pm25: number
+        pm10: number
+        overtaking_distance: number
+        distance_right: number
