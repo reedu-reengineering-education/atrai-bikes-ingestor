@@ -13,5 +13,5 @@ DELETE FROM track_points
 WHERE track_id NOT IN (SELECT id FROM tracks);
 
 ALTER TABLE tracks
-    ADD CONSTRAINT tracks_box_time_unique
+    ADD CONSTRAINT IF NOT EXISTS tracks_box_time_unique
     UNIQUE ("boxId", "startTime", "endTime");
