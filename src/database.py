@@ -194,53 +194,31 @@ class DatabaseManager:
     
     def get_latest_sync_date(self, box_id: str) -> Optional[date]:
         """
-        Get the latest sync date for a box.
-        
+        Get the date to resume syncing from for a box.
+
+        Derived from the actual latest stored measurement rather than a
+        separate bookkeeping table, so it can never drift ahead of what was
+        really ingested (e.g. a day whose archive wasn't published yet, or
+        an insert that silently found nothing to write).
+
         Args:
             box_id: The box ID
-            
+
         Returns:
-            Latest sync date, or None if no sync history exists
+            Date of the latest stored measurement, or None if no data exists
         """
         conn = self.pool.getconn()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
-                    """SELECT latest_sync_date FROM sync_state WHERE "boxId" = %s;""",
+                    """SELECT MAX("createdAt")::date FROM osem_bike_data WHERE "boxId" = %s;""",
                     (box_id,)
                 )
                 result = cursor.fetchone()
                 return result[0] if result else None
         finally:
             self.pool.putconn(conn)
-    
-    def update_sync_state(self, box_id: str, sync_date: date):
-        """
-        Update the sync state for a box.
-        
-        Args:
-            box_id: The box ID
-            sync_date: The date to record as the latest sync date
-        """
-        conn = self.pool.getconn()
-        try:
-            with conn.cursor() as cursor:
-                # Use INSERT ... ON CONFLICT UPDATE to handle both insert and update
-                cursor.execute("""
-                    INSERT INTO sync_state ("boxId", latest_sync_date, updated_at)
-                    VALUES (%s, %s, CURRENT_TIMESTAMP)
-                    ON CONFLICT ("boxId") 
-                    DO UPDATE SET 
-                        latest_sync_date = EXCLUDED.latest_sync_date,
-                        updated_at = CURRENT_TIMESTAMP;
-                """, (box_id, sync_date))
-                conn.commit()
-        except Exception as e:
-            conn.rollback()
-            raise
-        finally:
-            self.pool.putconn(conn)
-    
+
     def close(self):
         """Close all database connections in the pool."""
         if self.pool:

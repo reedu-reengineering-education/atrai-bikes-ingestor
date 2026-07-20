@@ -8,7 +8,7 @@ import pandas as pd
 
 import geopandas as gpd
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from .statistic_utils import process_tours, tour_stats
 
@@ -127,10 +127,12 @@ class Statistics(AtraiProcessor):
                     )
                 else:
                     # Upsert the data: delete the existing row with the same tag and insert the new one
-                    sql = text("DELETE FROM statistics WHERE tag IN :ids")
+                    sql = text("DELETE FROM statistics WHERE tag IN :ids").bindparams(
+                        bindparam("ids", expanding=True)
+                    )
                     conn.execute(
                         sql,
-                        {"ids": tuple(ids_to_delete)},
+                        {"ids": ids_to_delete},
                     )
                     bbox_gdf.to_postgis(
                         name="statistics",
