@@ -33,7 +33,6 @@ class DatabaseManager:
         
         Creates:
             - osem_bike_data table with all sensor columns
-            - sync_state table for tracking synchronization
             - indexes on boxId and createdAt columns
             
         NOTE: Column names match OpenSenseMapToolbox output format for 
@@ -93,16 +92,7 @@ class DatabaseManager:
                     CREATE INDEX IF NOT EXISTS idx_osem_bike_data_geom 
                     ON osem_bike_data USING GIST (geometry);
                 """)
-                
-                # Create sync_state table
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS sync_state (
-                        "boxId" VARCHAR(255) PRIMARY KEY,
-                        latest_sync_date DATE NOT NULL,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                
+
                 conn.commit()
         finally:
             self.pool.putconn(conn)

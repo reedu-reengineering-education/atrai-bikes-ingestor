@@ -117,12 +117,11 @@ class SyncCoordinator:
             
             # Move to next day
             current_date += timedelta(days=1)
-        
-        # Update sync state to today's date after completing the sync run (Requirement 5.4, 8.2)
-        # This ensures the next run starts from today, not from the last measurement date
-        self.database.update_sync_state(box.id, end_date)
-        logger.info(f"Updated sync state for {box.name} to {end_date}")
-    
+
+        # No sync-state bookkeeping: the resume point is derived from the
+        # latest stored measurement (see DatabaseManager.get_latest_sync_date).
+        logger.info(f"Finished sync for {box.name} up to {end_date}")
+
     def process_day(self, box, target_date: date):
         """
         Process data for a single box and date.
