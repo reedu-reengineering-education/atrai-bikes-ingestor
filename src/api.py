@@ -313,7 +313,11 @@ def _run_analyze(campaigns: list[str], processes: list[str]) -> None:
                 logger.info(f"[analyze] '{proc_name}' for '{campaign}' done")
             except Exception as e:
                 _analyze_status[campaign]["failed"].append(proc_name)
-                logger.warning(f"[analyze] '{proc_name}' for '{campaign}' failed: {e}")
+                logger.warning(
+                    f"[analyze] '{proc_name}' for '{campaign}' failed: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=True,
+                )
 
         _analyze_status[campaign]["running"] = False
         _analyze_status[campaign]["finished_at"] = datetime.now(timezone.utc).isoformat()

@@ -44,16 +44,19 @@ def nearest_neighbor_search(filtered_data, edges_filtered):
     return filtered_data
 
 def replace_outliers_with_nan_by_device(PM_data_no_outliers, column):
-    def calculate_and_replace_outliers(group):
-        Q1 = group[column].quantile(0.25)
-        Q3 = group[column].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
+    # Per-device IQR outlier removal, computed with transform rather than
+    # groupby().apply(): since pandas 2.2 the grouping column is excluded from
+    # the frame passed to apply(), so the 'boxId' column was dropped from the
+    # result and any following groupby('boxId') raised KeyError.
+    grouped = PM_data_no_outliers.groupby('boxId')[column]
+    Q1 = grouped.transform('quantile', 0.25)
+    Q3 = grouped.transform('quantile', 0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
 
-        group[column] = group[column].apply(lambda x: x if lower_bound <= x <= upper_bound else np.nan)
-        return group
+    PM_data_no_outliers = PM_data_no_outliers.copy()
+    values = PM_data_no_outliers[column]
+    PM_data_no_outliers[column] = values.where(values.between(lower_bound, upper_bound))
 
-    PM_data_no_outliers = PM_data_no_outliers.groupby('boxId', group_keys=False).apply(calculate_and_replace_outliers)
-    
     return PM_data_no_outliers
