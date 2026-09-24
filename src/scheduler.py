@@ -89,39 +89,66 @@ def sync_sensor_data_job() -> Dict[str, Any]:
             logger.warning(f"Invalid DEFAULT_START_DATE '{default_start_date_str}', using 2024-01-01")
             default_start_date = date_type(2024, 1, 1)
         
+        # Load per-campaign config (e.g. Heilbronn's individually-synced
+        # senseBox:home devices) from campaigns.yml
+        import yaml
+        campaigns_config_path = os.getenv("CAMPAIGNS_CONFIG", "./campaigns.yml")
+        try:
+            with open(campaigns_config_path) as f:
+                campaigns_cfg = yaml.safe_load(f).get("campaigns", {}) or {}
+        except Exception as e:
+            logger.warning(f"Could not load campaigns config from {campaigns_config_path}: {e}")
+            campaigns_cfg = {}
+
+        home_devices_cfg = campaigns_cfg.get("heilbronn", {}).get("home_devices", {}) or {}
+        home_box_ids = home_devices_cfg.get("box_ids", [])
+        home_table = home_devices_cfg.get("table", "osem_home_data_heilbronn")
+
         logger.info(f"Environment configuration loaded successfully")
         logger.info(f"Grouptags to sync: {grouptags}")
         logger.info(f"Default start date: {default_start_date}")
-        
+        if home_box_ids:
+            logger.info(f"Home devices to sync into '{home_table}': {home_box_ids}")
+
         # Import components (import here to avoid circular dependencies)
         from src.api_client import OpenSenseMapClient
         from src.parser import DataParser
         from src.database import DatabaseManager
         from src.sync_coordinator import SyncCoordinator
-        
+
         # Initialize components (Requirement 7.3)
         logger.info("Initializing sync components...")
         api_client = OpenSenseMapClient()
         parser = DataParser()
         database = DatabaseManager(database_url)
-        
+
         # Create database schema if it doesn't exist
         logger.info("Creating database schema (if not exists)...")
         database.create_schema()
+        if home_box_ids:
+            database.create_home_schema(table_name=home_table)
         logger.info("Database schema ready")
-        
+
         coordinator = SyncCoordinator(
             api_client, parser, database,
             grouptags=grouptags,
-            default_start_date=default_start_date
+            default_start_date=default_start_date,
+            home_box_ids=home_box_ids,
+            home_table=home_table,
         )
         logger.info("Components initialized successfully")
-        
+
         # Run sync job (Requirement 7.3)
         logger.info("Starting synchronization process...")
         coordinator.run_sync_job()
         logger.info("Synchronization process completed")
-        
+
+        # Run the Heilbronn senseBox:home device sync (separate table, unaffected
+        # by and not affecting the grouptag-based sync above)
+        logger.info("Starting home-device synchronization process...")
+        coordinator.run_home_sync_job()
+        logger.info("Home-device synchronization process completed")
+
         # Run track processing
         logger.info("Starting track processing...")
         from src.track_processor import TrackProcessor

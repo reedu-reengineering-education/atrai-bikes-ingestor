@@ -13,6 +13,14 @@ campaigns:
     road_network:
       - city: Heilbronn
         country: Germany
+    home_devices:
+      table: osem_home_data_heilbronn
+      box_ids:
+        - 69b99dd4deee28000952cea8
+        - 68db27a2ab896a0008a5109a
+        - 69bd6ceb867a8a00078d3c3f
+        - 69bd6c10867a8a00078bedbb
+        - 6a8e94d9852a4900074fe57c
 
   lauds_26:
     road_network:

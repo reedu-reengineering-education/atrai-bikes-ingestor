@@ -23,6 +23,10 @@ class Box:
     name: str
     sanitized_name: str
     grouptags: List[str]
+    # Static location (e.g. for stationary senseBox:home devices, which have
+    # no per-measurement GPS sensor). None for boxes without a known location.
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
 
 
 class OpenSenseMapClient:
@@ -149,7 +153,56 @@ class OpenSenseMapClient:
                 ))
         
         return boxes
-    
+
+    def fetch_box_by_id(self, box_id: str) -> Optional[Box]:
+        """
+        Fetch a single sensor box by its ID.
+
+        Used for devices that are synced individually (e.g. senseBox:home
+        stations) rather than discovered via a grouptag.
+
+        Args:
+            box_id: The box ID
+
+        Returns:
+            Box object, or None if the box doesn't exist or the request failed
+        """
+        url = f"{self.API_BASE_URL}/boxes/{box_id}"
+
+        response = self._request_with_retry("GET", url)
+
+        if response is None:
+            return None
+
+        box_data = response.json()
+
+        resolved_id = box_data.get("_id", box_id)
+        box_name = box_data.get("name", "")
+
+        if not resolved_id or not box_name:
+            return None
+
+        grouptags = box_data.get("grouptag", [])
+
+        longitude = None
+        latitude = None
+        location = box_data.get("currentLocation") or {}
+        coordinates = location.get("coordinates") or []
+        if len(coordinates) >= 2:
+            try:
+                longitude, latitude = float(coordinates[0]), float(coordinates[1])
+            except (TypeError, ValueError):
+                longitude, latitude = None, None
+
+        return Box(
+            id=resolved_id,
+            name=box_name,
+            sanitized_name=self.sanitize_name(box_name),
+            grouptags=grouptags if isinstance(grouptags, list) else [],
+            longitude=longitude,
+            latitude=latitude,
+        )
+
     def fetch_archive_metadata(self, box_id: str, sanitized_name: str, date: str) -> Optional[Dict]:
         """
         Fetch JSON metadata for a box on a specific date.
