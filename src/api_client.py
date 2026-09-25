@@ -60,7 +60,18 @@ class OpenSenseMapClient:
             Sanitized name with only [A-Za-z0-9._-] characters
         """
         return re.sub(r'[^A-Za-z0-9._-]', '_', name)
-    
+
+    @staticmethod
+    def _parse_location(box_data: Dict) -> tuple[Optional[float], Optional[float]]:
+        """Extract (longitude, latitude) from a box's `currentLocation`, if present."""
+        coordinates = (box_data.get("currentLocation") or {}).get("coordinates") or []
+        if len(coordinates) < 2:
+            return None, None
+        try:
+            return float(coordinates[0]), float(coordinates[1])
+        except (TypeError, ValueError):
+            return None, None
+
     def _request_with_retry(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
         """
         Make an HTTP request with retry logic and exponential backoff.
@@ -145,13 +156,16 @@ class OpenSenseMapClient:
             
             if box_id and box_name:
                 sanitized_name = self.sanitize_name(box_name)
+                longitude, latitude = self._parse_location(box_data)
                 boxes.append(Box(
                     id=box_id,
                     name=box_name,
                     sanitized_name=sanitized_name,
-                    grouptags=grouptags if isinstance(grouptags, list) else []
+                    grouptags=grouptags if isinstance(grouptags, list) else [],
+                    longitude=longitude,
+                    latitude=latitude,
                 ))
-        
+
         return boxes
 
     def fetch_box_by_id(self, box_id: str) -> Optional[Box]:
@@ -159,7 +173,8 @@ class OpenSenseMapClient:
         Fetch a single sensor box by its ID.
 
         Used for devices that are synced individually (e.g. senseBox:home
-        stations) rather than discovered via a grouptag.
+        stations not tagged with the discovery grouptag) rather than
+        discovered via a grouptag.
 
         Args:
             box_id: The box ID
@@ -183,16 +198,7 @@ class OpenSenseMapClient:
             return None
 
         grouptags = box_data.get("grouptag", [])
-
-        longitude = None
-        latitude = None
-        location = box_data.get("currentLocation") or {}
-        coordinates = location.get("coordinates") or []
-        if len(coordinates) >= 2:
-            try:
-                longitude, latitude = float(coordinates[0]), float(coordinates[1])
-            except (TypeError, ValueError):
-                longitude, latitude = None, None
+        longitude, latitude = self._parse_location(box_data)
 
         return Box(
             id=resolved_id,

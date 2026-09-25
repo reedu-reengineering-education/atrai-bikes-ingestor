@@ -26,6 +26,7 @@ class SyncCoordinator:
         database,
         grouptags: list[str] = None,
         default_start_date: date = None,
+        home_grouptag: str = None,
         home_box_ids: list[str] = None,
         home_table: str = "osem_home_data_heilbronn",
     ):
@@ -38,16 +39,18 @@ class SyncCoordinator:
             database: DatabaseManager instance
             grouptags: List of grouptags to sync (default: ["atrai"])
             default_start_date: Default start date for boxes with no sync history (default: 2024-01-01)
-            home_box_ids: List of specific box IDs to sync individually (e.g. senseBox:home
-                stations that aren't discovered via a grouptag). Stored in a separate table
-                so they don't mix with the grouptag-based sync.
-            home_table: Table/collection name to store home_box_ids measurements in
+            home_grouptag: Grouptag used to discover senseBox:home stations (e.g. "GreenCityHN").
+            home_box_ids: Additional specific box IDs to sync as home devices — for stations
+                that aren't tagged with home_grouptag and so can't be discovered that way.
+                Merged with the grouptag-discovered boxes (deduplicated by box ID).
+            home_table: Table/collection name to store home device measurements in
         """
         self.api_client = api_client
         self.parser = parser
         self.database = database
         self.grouptags = grouptags if grouptags else ["atrai"]
         self.default_start_date = default_start_date if default_start_date else date(2024, 1, 1)
+        self.home_grouptag = home_grouptag
         self.home_box_ids = home_box_ids if home_box_ids else []
         self.home_table = home_table
     
@@ -94,33 +97,50 @@ class SyncCoordinator:
 
     def run_home_sync_job(self):
         """
-        Execute a sync job for individually-configured home devices (e.g.
-        senseBox:home stations identified by box ID rather than a grouptag).
+        Execute a sync job for senseBox:home stations.
+
+        Boxes come from two sources, merged and deduplicated by box ID:
+        - self.home_grouptag: discovered dynamically, like run_sync_job() does for bikes
+        - self.home_box_ids: specific boxes that aren't tagged with home_grouptag and so
+          can't be discovered that way, fetched individually
 
         Data is stored in a separate table (self.home_table) so it never
-        mixes with the grouptag-based sync's data.
+        mixes with the grouptag-based bike sync's data.
         """
-        if not self.home_box_ids:
+        if not self.home_grouptag and not self.home_box_ids:
             logger.info("No home devices configured, skipping home sync job")
             return
 
-        logger.info(f"Starting home-device sync job for boxes: {self.home_box_ids}")
+        boxes_by_id = {}
 
-        for i, box_id in enumerate(self.home_box_ids, 1):
+        if self.home_grouptag:
+            logger.info(f"Fetching home devices with grouptag '{self.home_grouptag}'")
+            for box in self.api_client.fetch_boxes(self.home_grouptag):
+                boxes_by_id[box.id] = box
+            logger.info(f"Found {len(boxes_by_id)} home device(s) for grouptag '{self.home_grouptag}'")
+
+        for box_id in self.home_box_ids:
+            if box_id in boxes_by_id:
+                continue
+            box = self.api_client.fetch_box_by_id(box_id)
+            if box is None:
+                logger.error(f"[home] Could not fetch box {box_id}")
+                continue
+            boxes_by_id[box.id] = box
+
+        boxes = list(boxes_by_id.values())
+        logger.info(f"Starting home-device sync job for {len(boxes)} box(es)")
+
+        for i, box in enumerate(boxes, 1):
             try:
-                box = self.api_client.fetch_box_by_id(box_id)
-                if box is None:
-                    logger.error(f"[home] [{i}/{len(self.home_box_ids)}] Could not fetch box {box_id}")
-                    continue
-
-                logger.info(f"[home] [{i}/{len(self.home_box_ids)}] Syncing box: {box.name} ({box.id})")
+                logger.info(f"[home] [{i}/{len(boxes)}] Syncing box: {box.name} ({box.id})")
                 self.sync_home_box(box)
-                logger.info(f"[home] [{i}/{len(self.home_box_ids)}] Successfully synced {box.name}")
+                logger.info(f"[home] [{i}/{len(boxes)}] Successfully synced {box.name}")
             except Exception as e:
-                logger.error(f"[home] [{i}/{len(self.home_box_ids)}] Error syncing box {box_id}: {e}", exc_info=True)
+                logger.error(f"[home] [{i}/{len(boxes)}] Error syncing box {box.name} ({box.id}): {e}", exc_info=True)
                 continue
 
-        logger.info(f"Home-device sync job completed. Processed {len(self.home_box_ids)} box(es)")
+        logger.info(f"Home-device sync job completed. Processed {len(boxes)} box(es)")
 
     def sync_box(self, box, start_date: Optional[date] = None, end_date: Optional[date] = None):
         """

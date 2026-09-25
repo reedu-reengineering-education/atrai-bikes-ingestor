@@ -15,12 +15,10 @@ campaigns:
         country: Germany
     home_devices:
       table: osem_home_data_heilbronn
+      grouptag: GreenCityHN
       box_ids:
-        - 69b99dd4deee28000952cea8
-        - 68db27a2ab896a0008a5109a
-        - 69bd6ceb867a8a00078d3c3f
-        - 69bd6c10867a8a00078bedbb
-        - 6a8e94d9852a4900074fe57c
+        - 6a8e94d9852a4900074fe57c  # experimenta Sternwarte
+        - 68db27a2ab896a0008a5109a  # THW Heilbronn
 
   lauds_26:
     road_network:

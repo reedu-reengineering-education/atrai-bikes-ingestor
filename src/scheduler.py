@@ -101,14 +101,19 @@ def sync_sensor_data_job() -> Dict[str, Any]:
             campaigns_cfg = {}
 
         home_devices_cfg = campaigns_cfg.get("heilbronn", {}).get("home_devices", {}) or {}
+        home_grouptag = home_devices_cfg.get("grouptag")
         home_box_ids = home_devices_cfg.get("box_ids", [])
         home_table = home_devices_cfg.get("table", "osem_home_data_heilbronn")
+        home_devices_configured = bool(home_grouptag or home_box_ids)
 
         logger.info(f"Environment configuration loaded successfully")
         logger.info(f"Grouptags to sync: {grouptags}")
         logger.info(f"Default start date: {default_start_date}")
-        if home_box_ids:
-            logger.info(f"Home devices to sync into '{home_table}': {home_box_ids}")
+        if home_devices_configured:
+            logger.info(
+                f"Home devices to sync into '{home_table}': grouptag={home_grouptag!r}, "
+                f"extra box_ids={home_box_ids}"
+            )
 
         # Import components (import here to avoid circular dependencies)
         from src.api_client import OpenSenseMapClient
@@ -125,7 +130,7 @@ def sync_sensor_data_job() -> Dict[str, Any]:
         # Create database schema if it doesn't exist
         logger.info("Creating database schema (if not exists)...")
         database.create_schema()
-        if home_box_ids:
+        if home_devices_configured:
             database.create_home_schema(table_name=home_table)
         logger.info("Database schema ready")
 
@@ -133,6 +138,7 @@ def sync_sensor_data_job() -> Dict[str, Any]:
             api_client, parser, database,
             grouptags=grouptags,
             default_start_date=default_start_date,
+            home_grouptag=home_grouptag,
             home_box_ids=home_box_ids,
             home_table=home_table,
         )
