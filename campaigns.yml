@@ -13,6 +13,12 @@ campaigns:
     road_network:
       - city: Heilbronn
         country: Germany
+    home_devices:
+      table: osem_home_data_heilbronn
+      grouptag: GreenCityHN
+      box_ids:
+        - 6a8e94d9852a4900074fe57c  # experimenta Sternwarte
+        - 68db27a2ab896a0008a5109a  # THW Heilbronn
 
   lauds_26:
     road_network:

@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Measurement:
-    """Represents a single sensor measurement."""
+    """Represents a single senseBox:bike sensor measurement."""
     boxid: str
     boxname: str
     grouptags: str  # JSON array as string
@@ -41,6 +41,39 @@ class Measurement:
     sett: Optional[int] = None
     speed: Optional[float] = None
     distance_right: Optional[float] = None
+
+
+@dataclass
+class HomeMeasurement:
+    """Represents a single senseBox:home / weather-station sensor measurement.
+
+    Separate from Measurement (senseBox:bike) because the two device types
+    report genuinely different phenomena — no overtaking/surface/speed here,
+    and no pressure/wind/rain/UV on the bikes.
+    """
+    boxid: str
+    boxname: str
+    grouptags: str  # JSON array as string
+    timestamp: datetime
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    pressure: Optional[float] = None
+    illuminance: Optional[float] = None
+    uv: Optional[float] = None
+    uv_index: Optional[float] = None
+    pm1: Optional[float] = None
+    pm2_5: Optional[float] = None
+    pm4: Optional[float] = None
+    pm10: Optional[float] = None
+    wind_speed: Optional[float] = None
+    wind_gust: Optional[float] = None
+    wind_direction: Optional[float] = None
+    rain_rate: Optional[float] = None
+    dewpoint: Optional[float] = None
+    solar_radiation: Optional[float] = None
+    cloud_base: Optional[float] = None
 
 
 @dataclass
@@ -88,7 +121,52 @@ class DataParser:
         'surface sett': 'sett',
         'speed': 'speed',
     }
-    
+
+    # Sensor name to database column mapping for senseBox:home / weather-station
+    # devices (case-insensitive). These boxes use German titles and a different
+    # phenomenon set than the bike sensors above (see SENSOR_COLUMN_MAP), so
+    # they get their own map rather than polluting the bike one.
+    HOME_SENSOR_COLUMN_MAP = {
+        'temperatur': 'temperature',
+        'temperature': 'temperature',
+        'rel. luftfeuchte': 'humidity',
+        'relative luftfeuchte': 'humidity',
+        'luftfeuchte': 'humidity',
+        'humid': 'humidity',
+        'humidity': 'humidity',
+        'rel. humidity': 'humidity',
+        'luftdruck': 'pressure',
+        'luftdruck (nn)': 'pressure',
+        'pressure': 'pressure',
+        'beleuchtungsstärke': 'illuminance',
+        'ambient light': 'illuminance',
+        'illuminance': 'illuminance',
+        'uv-intensität': 'uv',
+        'uv intensity': 'uv',
+        'uv-index': 'uv_index',
+        'uv index': 'uv_index',
+        'pm1': 'pm1',
+        'pm25': 'pm2_5',
+        'pm2.5': 'pm2_5',
+        'pm4': 'pm4',
+        'pm10': 'pm10',
+        'windgeschwindigkeit': 'wind_speed',
+        'windspeed': 'wind_speed',
+        'wind speed': 'wind_speed',
+        'windgust': 'wind_gust',
+        'wind gust': 'wind_gust',
+        'windrichtung': 'wind_direction',
+        'wind direction': 'wind_direction',
+        'rain rate': 'rain_rate',
+        'regenrate': 'rain_rate',
+        'dewpoint': 'dewpoint',
+        'taupunkt': 'dewpoint',
+        'solar radiation': 'solar_radiation',
+        'globalstrahlung': 'solar_radiation',
+        'wolkenbasis': 'cloud_base',
+        'cloud base': 'cloud_base',
+    }
+
     def parse_csv(self, csv_content: str) -> List[Measurement]:
         """
         Parse CSV sensor data into measurement objects.
@@ -229,3 +307,18 @@ class DataParser:
         
         # Look up in the mapping
         return self.SENSOR_COLUMN_MAP.get(sensor_name_lower)
+
+    def map_home_sensor_to_column(self, sensor_name: str) -> Optional[str]:
+        """
+        Map senseBox:home sensor names to database column names.
+
+        Args:
+            sensor_name: The sensor name from the archive
+
+        Returns:
+            Database column name, or None if not mapped
+        """
+        if not sensor_name:
+            return None
+
+        return self.HOME_SENSOR_COLUMN_MAP.get(sensor_name.lower().strip())

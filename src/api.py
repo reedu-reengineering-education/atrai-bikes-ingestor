@@ -383,6 +383,7 @@ _ANALYSIS_TABLE_PREFIXES = (
     "tracks",
     "track_points",
     "osem_bike_data",
+    "osem_home_data_heilbronn",
 )
 
 
