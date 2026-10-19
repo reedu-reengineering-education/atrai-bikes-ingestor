@@ -1,3 +1,10 @@
+# Keep container logs bounded (default json-file logs grow forever)
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   # ─── Database ───────────────────────────────────────────────────────────────
   postgis:
@@ -15,6 +22,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   # ─── App (API + ingestion + analysis) ───────────────────────────────────────
   app:
@@ -36,29 +44,39 @@ services:
     depends_on:
       postgis:
         condition: service_healthy
+    # POST /sync and /analyze run their work in subprocesses inside this
+    # container; the limit keeps a runaway job from starving the host.
+    mem_limit: 1g
     restart: unless-stopped
+    logging: *default-logging
 
-  # ─── Scheduler (periodic sync + analysis trigger) ───────────────────────────
-  # Optional: remove this service if you prefer to trigger POST /sync manually.
+  # ─── Scheduler (periodic sync + analysis) ───────────────────────────────────
+  # Runs sync, track processing and the analysis pipeline every
+  # SYNC_INTERVAL_HOURS. Analysis processes run one at a time in subprocesses.
   scheduler:
     build: .
     container_name: atrai_scheduler
     command: ["python", "run_scheduler.py"]
+    volumes:
+      - ./campaigns.yml:/app/campaigns.yml:ro
     environment:
       DATABASE_URL: postgresql://${DATABASE_USER:-${POSTGRES_USER:-postgres}}:${DATABASE_PASSWORD:-${POSTGRES_PASSWORD:-postgres}}@postgis:5432/${DATABASE_NAME:-${POSTGRES_DB:-atrai_bikes}}
       GROUPTAGS: ${GROUPTAGS:-atrai}
       DEFAULT_START_DATE: ${DEFAULT_START_DATE:-2024-01-01}
       SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-6}
-      # After sync the scheduler POSTs to the app to trigger analysis:
-      PYGEOAPI_URL: http://app:8000
+      RUN_ANALYSIS: ${RUN_ANALYSIS:-true}
+      ANALYSIS_TIMEOUT_SECONDS: ${ANALYSIS_TIMEOUT_SECONDS:-3600}
+      CAMPAIGNS_CONFIG: /app/campaigns.yml
       INT_API_TOKEN: ${INT_API_TOKEN}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgis:
         condition: service_healthy
-      app:
-        condition: service_started
+    # An analysis process that exceeds this is OOM-killed on its own and
+    # reported as failed; the scheduler and the other containers keep running.
+    mem_limit: 2g
     restart: unless-stopped
+    logging: *default-logging
 
   # ─── Martin (vector tile server) ────────────────────────────────────────────
   martin:
@@ -75,6 +93,7 @@ services:
       postgis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgis_data:

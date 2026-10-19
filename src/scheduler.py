@@ -89,39 +89,72 @@ def sync_sensor_data_job() -> Dict[str, Any]:
             logger.warning(f"Invalid DEFAULT_START_DATE '{default_start_date_str}', using 2024-01-01")
             default_start_date = date_type(2024, 1, 1)
         
+        # Load per-campaign config (e.g. Heilbronn's individually-synced
+        # senseBox:home devices) from campaigns.yml
+        import yaml
+        campaigns_config_path = os.getenv("CAMPAIGNS_CONFIG", "./campaigns.yml")
+        try:
+            with open(campaigns_config_path) as f:
+                campaigns_cfg = yaml.safe_load(f).get("campaigns", {}) or {}
+        except Exception as e:
+            logger.warning(f"Could not load campaigns config from {campaigns_config_path}: {e}")
+            campaigns_cfg = {}
+
+        home_devices_cfg = campaigns_cfg.get("heilbronn", {}).get("home_devices", {}) or {}
+        home_grouptag = home_devices_cfg.get("grouptag")
+        home_box_ids = home_devices_cfg.get("box_ids", [])
+        home_table = home_devices_cfg.get("table", "osem_home_data_heilbronn")
+        home_devices_configured = bool(home_grouptag or home_box_ids)
+
         logger.info(f"Environment configuration loaded successfully")
         logger.info(f"Grouptags to sync: {grouptags}")
         logger.info(f"Default start date: {default_start_date}")
-        
+        if home_devices_configured:
+            logger.info(
+                f"Home devices to sync into '{home_table}': grouptag={home_grouptag!r}, "
+                f"extra box_ids={home_box_ids}"
+            )
+
         # Import components (import here to avoid circular dependencies)
         from src.api_client import OpenSenseMapClient
         from src.parser import DataParser
         from src.database import DatabaseManager
         from src.sync_coordinator import SyncCoordinator
-        
+
         # Initialize components (Requirement 7.3)
         logger.info("Initializing sync components...")
         api_client = OpenSenseMapClient()
         parser = DataParser()
         database = DatabaseManager(database_url)
-        
+
         # Create database schema if it doesn't exist
         logger.info("Creating database schema (if not exists)...")
         database.create_schema()
+        if home_devices_configured:
+            database.create_home_schema(table_name=home_table)
         logger.info("Database schema ready")
-        
+
         coordinator = SyncCoordinator(
             api_client, parser, database,
             grouptags=grouptags,
-            default_start_date=default_start_date
+            default_start_date=default_start_date,
+            home_grouptag=home_grouptag,
+            home_box_ids=home_box_ids,
+            home_table=home_table,
         )
         logger.info("Components initialized successfully")
-        
+
         # Run sync job (Requirement 7.3)
         logger.info("Starting synchronization process...")
         coordinator.run_sync_job()
         logger.info("Synchronization process completed")
-        
+
+        # Run the Heilbronn senseBox:home device sync (separate table, unaffected
+        # by and not affecting the grouptag-based sync above)
+        logger.info("Starting home-device synchronization process...")
+        coordinator.run_home_sync_job()
+        logger.info("Home-device synchronization process completed")
+
         # Run track processing
         logger.info("Starting track processing...")
         from src.track_processor import TrackProcessor
@@ -129,32 +162,38 @@ def sync_sensor_data_job() -> Dict[str, Any]:
         tracks_stored = track_processor.process()
         logger.info(f"Track processing completed. Stored {tracks_stored} tracks")
 
-        # Trigger analysis pipeline via the API for each synced grouptag
-        api_url = os.getenv("PYGEOAPI_URL", "")  # reusing env var; points to the app service
-        int_api_token = os.getenv("INT_API_TOKEN", "")
-        if api_url and int_api_token:
-            import requests as req
-            logger.info(f"Triggering analysis pipeline for grouptags: {grouptags}")
-            for grouptag in grouptags:
-                try:
-                    resp = req.post(
-                        f"{api_url}/analyze",
-                        json={
-                            "campaigns": [grouptag],
-                            "processes": "all",
-                        },
-                        timeout=7200,
-                    )
-                    resp.raise_for_status()
-                    logger.info(f"Analysis pipeline triggered for grouptag '{grouptag}'")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to trigger analysis for grouptag '{grouptag}': {e}"
-                    )
-        else:
-            logger.info(
-                "PYGEOAPI_URL or INT_API_TOKEN not set — skipping analysis trigger"
+        # Refresh planner statistics after the bulk writes
+        analyze_tables = ["osem_bike_data", "tracks", "track_points"]
+        if home_devices_configured:
+            analyze_tables.append(home_table)
+        try:
+            database.analyze(analyze_tables)
+            logger.info(f"Refreshed table statistics: {analyze_tables}")
+        except Exception as e:
+            logger.warning(f"Could not refresh table statistics: {e}")
+
+        # Run the analysis pipeline for each synced grouptag. Each process runs
+        # in its own subprocess, one at a time (see src/analysis.py).
+        if os.getenv("RUN_ANALYSIS", "true").lower() in ("1", "true", "yes"):
+            from src.analysis import AVAILABLE_PROCESSES, run_analysis
+
+            logger.info(f"Running analysis pipeline for grouptags: {grouptags}")
+            failed = []
+
+            def on_result(campaign: str, proc_name: str, outcome: str) -> None:
+                if outcome == "failed":
+                    failed.append(f"{campaign}/{proc_name}")
+
+            run_analysis(
+                grouptags,
+                AVAILABLE_PROCESSES,
+                refresh_road_network=False,
+                on_result=on_result,
             )
+            if failed:
+                logger.warning(f"Analysis processes failed: {failed}")
+        else:
+            logger.info("RUN_ANALYSIS disabled — skipping analysis pipeline")
 
         # Calculate execution time
         end_time = datetime.now(timezone.utc)

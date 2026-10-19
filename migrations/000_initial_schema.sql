@@ -71,14 +71,9 @@ COMMENT ON COLUMN osem_bike_data.geometry IS 'PostGIS point geometry for spatial
 -- Indexes for osem_bike_data
 -- ============================================
 
-CREATE INDEX IF NOT EXISTS idx_osem_bike_data_boxid 
-ON osem_bike_data("boxId");
-
+-- Lookups by boxId / (boxId, createdAt) use the UNIQUE constraint's index.
 CREATE INDEX IF NOT EXISTS idx_osem_bike_data_timestamp 
 ON osem_bike_data("createdAt");
-
-CREATE INDEX IF NOT EXISTS idx_osem_bike_data_boxid_timestamp 
-ON osem_bike_data("boxId", "createdAt");
 
 -- Spatial index for PostGIS geometry (used by Martin tile server)
 CREATE INDEX IF NOT EXISTS idx_osem_bike_data_geom 
