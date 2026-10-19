@@ -537,18 +537,23 @@ def get_collection_items(
 
     def stream():
         returned = 0
+        # The opening is sent together with the first batch: Caddy's `encode`
+        # only compresses a response without Content-Length if its first
+        # chunk exceeds minimum_length (512 bytes).
+        chunk = (
+            '{"type":"FeatureCollection",'
+            f'"numberMatched":{total},"offset":{offset},"limit":{limit},'
+            '"features":['
+        )
         try:
-            yield (
-                '{"type":"FeatureCollection",'
-                f'"numberMatched":{total},"offset":{offset},"limit":{limit},'
-                '"features":['
-            )
             batch = first_batch
             while batch:
-                yield ("," if returned else "") + ",".join(row[0] for row in batch)
+                chunk += ("," if returned else "") + ",".join(row[0] for row in batch)
+                yield chunk
+                chunk = ""
                 returned += len(batch)
                 batch = cur.fetchmany(_ITEMS_BATCH_SIZE)
-            yield f'],"numberReturned":{returned}}}'
+            yield chunk + f'],"numberReturned":{returned}}}'
         except Exception:
             # Headers are already sent; all we can do is log and cut the stream
             logger.exception(f"get_collection_items({name}): streaming failed")
