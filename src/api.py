@@ -8,6 +8,7 @@ Single service that handles:
   - Collection browsing: inspect analysis result tables (GET /collections)
 """
 
+import json
 import logging
 import os
 import sys
@@ -28,8 +29,9 @@ if _src_dir not in sys.path:
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,30 @@ FROM tracks
 WHERE "groupTags"::jsonb ? %s
 """
 
+# Same aggregates for all grouptags in a single scan of tracks.
+_ALL_CAMPAIGNS_QUERY = """
+SELECT
+    g.tag                                                  AS grouptag,
+    COUNT(DISTINCT t.id)                                   AS total_tracks,
+    COALESCE(SUM(t.distance_meters),  0) / 1000           AS total_distance_km,
+    COALESCE(SUM(t.duration_seconds), 0) / 3600           AS total_duration_hours,
+    COALESCE(AVG(t.distance_meters),  0) / 1000           AS avg_track_distance_km,
+    COALESCE(AVG(t.duration_seconds), 0) / 60             AS avg_track_duration_minutes,
+    CASE WHEN SUM(t.duration_seconds) > 0
+         THEN (SUM(t.distance_meters) / SUM(t.duration_seconds)) * 3.6
+         ELSE 0 END                                        AS avg_speed_kmh,
+    COALESCE(MAX(t.distance_meters),  0) / 1000           AS max_track_distance_km,
+    COUNT(DISTINCT t."boxId")                             AS num_riders,
+    MIN(t."startTime")::text                              AS start_date,
+    MAX(t."endTime")::text                                AS end_date
+FROM tracks t
+CROSS JOIN LATERAL jsonb_array_elements_text(
+    CASE WHEN jsonb_typeof(t."groupTags"::jsonb) = 'array' THEN t."groupTags"::jsonb END
+) AS g(tag)
+WHERE g.tag = ANY(%s)
+GROUP BY g.tag
+"""
+
 
 def _row_to_stats(row: dict) -> CampaignStats:
     return CampaignStats(
@@ -147,20 +173,23 @@ def _row_to_stats(row: dict) -> CampaignStats:
 
 
 @app.get("/campaigns", response_model=AllCampaignsStats)
-async def get_all_campaigns():
+def get_all_campaigns():
     """Aggregated statistics for all configured campaigns (from GROUPTAGS env var)."""
     grouptags_env = os.getenv("GROUPTAGS", "")
     grouptags = [t.strip() for t in grouptags_env.split(",") if t.strip()]
     try:
         conn = get_db()
-        campaigns: list[CampaignStats] = []
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            for grouptag in grouptags:
-                cur.execute(_CAMPAIGN_QUERY, (grouptag, grouptag))
-                row = cur.fetchone()
-                if row and row["total_tracks"] > 0:
-                    campaigns.append(_row_to_stats(row))
-        conn.close()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(_ALL_CAMPAIGNS_QUERY, (grouptags,))
+                rows = {r["grouptag"]: r for r in cur.fetchall()}
+        finally:
+            conn.close()
+        # Keep the order of GROUPTAGS in the response
+        campaigns = [
+            _row_to_stats(rows[t]) for t in grouptags
+            if t in rows and rows[t]["total_tracks"] > 0
+        ]
         return AllCampaignsStats(
             campaigns=campaigns,
             total_tracks=sum(c.total_tracks for c in campaigns),
@@ -172,7 +201,7 @@ async def get_all_campaigns():
 
 
 @app.get("/campaigns/{grouptag}", response_model=CampaignStats)
-async def get_campaign_stats(grouptag: str):
+def get_campaign_stats(grouptag: str):
     """Statistics for a specific campaign (grouptag)."""
     try:
         conn = get_db()
@@ -407,7 +436,7 @@ def _list_analysis_tables() -> list[str]:
 
 
 @app.get("/collections")
-async def list_collections():
+def list_collections():
     """List all analysis result tables that exist in the database."""
     try:
         tables = _list_analysis_tables()
@@ -417,11 +446,15 @@ async def list_collections():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Rows fetched per round trip when streaming collection items
+_ITEMS_BATCH_SIZE = 2000
+
+
 @app.get("/collections/{name}/items")
-async def get_collection_items(
+def get_collection_items(
     name: str,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(100, ge=0),
+    offset: int = Query(0, ge=0),
     campaign: Optional[str] = None,
 ):
     """
@@ -430,6 +463,9 @@ async def get_collection_items(
     - `limit` — max rows to return (default 100, use 0 for unlimited — careful with large tables)
     - `offset` — skip this many rows (for pagination)
     - `campaign` — unused filter placeholder (future use)
+
+    Features are serialised to GeoJSON by PostGIS and streamed in batches, so
+    large limits neither build the whole response in Python nor hold it in memory.
 
     For raw sensor data and tracks, use the Martin tile server (:3000) instead.
     """
@@ -445,73 +481,82 @@ async def get_collection_items(
             detail=f"Collection '{name}' not found. Available: {known}",
         )
 
+    conn = get_db()
     try:
-        conn = get_db()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             # Find the geometry column
             cur.execute(
                 """
-                SELECT column_name FROM information_schema.columns
+                SELECT column_name, udt_name FROM information_schema.columns
                 WHERE table_schema = 'public'
                   AND table_name   = %s
                   AND udt_name     IN ('geometry','geography')
+                ORDER BY ordinal_position
                 LIMIT 1
                 """,
                 (name,),
             )
             geom_row = cur.fetchone()
-            geom_col = geom_row["column_name"] if geom_row else None
-
-            if geom_col:
-                select = f"""
-                    SELECT *,
-                           ST_AsGeoJSON({geom_col})::json AS _geojson
-                    FROM "{name}"
-                    {"LIMIT " + str(limit) if limit > 0 else ""}
-                    OFFSET %s
-                """
-                cur.execute(select, (offset,))
-            else:
-                select = (
-                    f'SELECT * FROM "{name}" {"LIMIT " + str(limit) if limit > 0 else ""} OFFSET %s'
-                )
-                cur.execute(select, (offset,))
-
-            rows = cur.fetchall()
 
             # Total row count for pagination
             cur.execute(f'SELECT COUNT(*) FROM "{name}"')
-            total = cur.fetchone()["count"]
-        conn.close()
+            total = cur.fetchone()[0]
 
-        features = []
-        for row in rows:
-            props = {k: v for k, v in row.items() if k not in (geom_col, "_geojson")}
-            # make values JSON-serialisable
-            for k, v in props.items():
-                if hasattr(v, "isoformat"):
-                    props[k] = v.isoformat()
-            feature = {
-                "type": "Feature",
-                "geometry": row.get("_geojson"),
-                "properties": props,
-            }
-            features.append(feature)
+        # One GeoJSON Feature (as text) per row. Postgres renders timestamps as
+        # ISO 8601 and non-finite floats as strings, so the output is valid JSON.
+        if geom_row and geom_row[1] == "geometry":
+            feature_sql = "ST_AsGeoJSON(t.*, %s)"
+            params: tuple = (geom_row[0],)
+        elif geom_row:
+            # The record form of ST_AsGeoJSON only picks up geometry columns
+            feature_sql = (
+                "json_build_object('type', 'Feature',"
+                f""" 'geometry', ST_AsGeoJSON(t."{geom_row[0]}")::json,"""
+                " 'properties', to_jsonb(t) - %s)::text"
+            )
+            params = (geom_row[0],)
+        else:
+            feature_sql = (
+                "json_build_object('type', 'Feature', 'geometry', NULL,"
+                " 'properties', to_json(t))::text"
+            )
+            params = ()
 
-        return {
-            "type": "FeatureCollection",
-            "features": features,
-            "numberMatched": total,
-            "numberReturned": len(features),
-            "offset": offset,
-            "limit": limit,
-        }
+        limit_sql = f"LIMIT {limit}" if limit > 0 else ""
+        query = f'SELECT {feature_sql} FROM (SELECT * FROM "{name}" {limit_sql} OFFSET %s) t'
 
-    except HTTPException:
-        raise
+        # Server-side cursor: rows arrive in batches instead of all at once.
+        # Fetch the first batch here so query errors still become a 500.
+        cur = conn.cursor(name="collection_items")
+        cur.execute(query, params + (offset,))
+        first_batch = cur.fetchmany(_ITEMS_BATCH_SIZE)
     except Exception as e:
+        conn.close()
         logger.error(f"get_collection_items({name}): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+    def stream():
+        returned = 0
+        try:
+            yield (
+                '{"type":"FeatureCollection",'
+                f'"numberMatched":{total},"offset":{offset},"limit":{limit},'
+                '"features":['
+            )
+            batch = first_batch
+            while batch:
+                yield ("," if returned else "") + ",".join(row[0] for row in batch)
+                returned += len(batch)
+                batch = cur.fetchmany(_ITEMS_BATCH_SIZE)
+            yield f'],"numberReturned":{returned}}}'
+        except Exception:
+            # Headers are already sent; all we can do is log and cut the stream
+            logger.exception(f"get_collection_items({name}): streaming failed")
+            raise
+        finally:
+            conn.close()
+
+    return StreamingResponse(stream(), media_type="application/json")
 
 
 # ===========================================================================
