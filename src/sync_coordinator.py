@@ -142,6 +142,39 @@ class SyncCoordinator:
 
         logger.info(f"Home-device sync job completed. Processed {len(boxes)} box(es)")
 
+    def _sync_range(self, box, table_name: str, start_date: Optional[date], end_date: Optional[date]):
+        """
+        Determine the archive days to fetch for a box.
+
+        Starts the day after the latest stored measurement (or at
+        default_start_date / the box's creation date when nothing is stored)
+        and ends today, capped at the box's last measurement reported by the
+        API. Without the cap, inactive boxes would have every day since their
+        last measurement re-requested on every run.
+        """
+        if end_date is None:
+            end_date = date.today()
+            last_measurement = getattr(box, "last_measurement_date", None)
+            if last_measurement is not None:
+                end_date = min(end_date, last_measurement)
+
+        if start_date is None:
+            latest_sync_date = self.database.get_latest_sync_date(box.id, table_name=table_name)
+            if latest_sync_date is None:
+                start_date = self.default_start_date
+                created = getattr(box, "created_date", None)
+                if created is not None:
+                    start_date = max(start_date, created)
+                logger.info(f"No sync history for {box.name} ({box.id}), starting from {start_date}")
+            else:
+                start_date = latest_sync_date + timedelta(days=1)
+
+        if start_date > end_date:
+            logger.info(f"{box.name} ({box.id}) is up to date (last measurement {end_date})")
+        else:
+            logger.info(f"Syncing {box.name} ({box.id}) from {start_date} to {end_date}")
+        return start_date, end_date
+
     def sync_box(self, box, start_date: Optional[date] = None, end_date: Optional[date] = None):
         """
         Sync data for a single (bike) box within date range.
@@ -156,23 +189,7 @@ class SyncCoordinator:
             start_date: Optional start date for sync (inclusive). If None, determined from sync state.
             end_date: Optional end date for sync (inclusive). If None, defaults to today.
         """
-        # Determine end date (default to today)
-        if end_date is None:
-            end_date = date.today()
-
-        # Determine start date (Requirement 5.1, 5.2, 5.3)
-        if start_date is None:
-            # Get latest sync date from database
-            latest_sync_date = self.database.get_latest_sync_date(box.id)
-
-            if latest_sync_date is None:
-                # No sync history, start from default_start_date
-                start_date = self.default_start_date
-                logger.info(f"No sync history for {box.name} ({box.id}), starting from {start_date}")
-            else:
-                # Start from day after latest sync date (Requirement 5.3)
-                start_date = latest_sync_date + timedelta(days=1)
-                logger.info(f"Resuming sync for {box.name} ({box.id}) from {start_date}")
+        start_date, end_date = self._sync_range(box, "osem_bike_data", start_date, end_date)
 
         # Iterate through dates from start_date to end_date (Requirement 6.3)
         current_date = start_date
@@ -203,8 +220,7 @@ class SyncCoordinator:
 
         try:
             # Fetch archive metadata for this box and date
-            logger.info(f"Processing {box.name} ({box.id}) for date {date_str}")
-            logger.info(box.sanitized_name)
+            logger.debug(f"Processing {box.name} ({box.id}) for date {date_str}")
             metadata = self.api_client.fetch_archive_metadata(
                 box.id,
                 box.sanitized_name,
@@ -213,7 +229,7 @@ class SyncCoordinator:
 
             # Handle missing archive data gracefully (Requirement 2.4, 6.1)
             if metadata is None:
-                logger.info(f"No archive data found for {box.name} on {date_str}")
+                logger.debug(f"No archive data found for {box.name} on {date_str}")
                 return
 
             # Parse metadata to get sensor information
@@ -295,7 +311,7 @@ class SyncCoordinator:
                 inserted_count = self.database.insert_measurements(all_measurements)
                 logger.info(f"Processed {inserted_count} measurement records for {box.name} on {date_str}")
             else:
-                logger.info(f"No measurements to insert for {box.name} on {date_str}")
+                logger.debug(f"No measurements to insert for {box.name} on {date_str}")
 
         except Exception as e:
             logger.error(f"Error processing {box.name} on {date_str}: {e}")
@@ -315,18 +331,7 @@ class SyncCoordinator:
             start_date: Optional start date for sync (inclusive). If None, determined from sync state.
             end_date: Optional end date for sync (inclusive). If None, defaults to today.
         """
-        if end_date is None:
-            end_date = date.today()
-
-        if start_date is None:
-            latest_sync_date = self.database.get_latest_sync_date(box.id, table_name=self.home_table)
-
-            if latest_sync_date is None:
-                start_date = self.default_start_date
-                logger.info(f"No sync history for {box.name} ({box.id}), starting from {start_date}")
-            else:
-                start_date = latest_sync_date + timedelta(days=1)
-                logger.info(f"Resuming sync for {box.name} ({box.id}) from {start_date}")
+        start_date, end_date = self._sync_range(box, self.home_table, start_date, end_date)
 
         current_date = start_date
         while current_date <= end_date:
@@ -351,7 +356,7 @@ class SyncCoordinator:
         date_str = target_date.strftime('%Y-%m-%d')
 
         try:
-            logger.info(f"Processing {box.name} ({box.id}) for date {date_str}")
+            logger.debug(f"Processing {box.name} ({box.id}) for date {date_str}")
             metadata = self.api_client.fetch_archive_metadata(
                 box.id,
                 box.sanitized_name,
@@ -359,7 +364,7 @@ class SyncCoordinator:
             )
 
             if metadata is None:
-                logger.info(f"No archive data found for {box.name} on {date_str}")
+                logger.debug(f"No archive data found for {box.name} on {date_str}")
                 return
 
             try:
@@ -431,7 +436,7 @@ class SyncCoordinator:
                 inserted_count = self.database.insert_home_measurements(all_measurements, table_name=self.home_table)
                 logger.info(f"Processed {inserted_count} measurement records for {box.name} on {date_str}")
             else:
-                logger.info(f"No measurements to insert for {box.name} on {date_str}")
+                logger.debug(f"No measurements to insert for {box.name} on {date_str}")
 
         except Exception as e:
             logger.error(f"Error processing {box.name} on {date_str}: {e}")

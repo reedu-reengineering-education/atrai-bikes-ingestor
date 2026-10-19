@@ -19,9 +19,14 @@ import geopandas as gpd
 from shapely.geometry import Point, LineString
 import movingpandas as mpd
 import psycopg2
-from psycopg2.extras import execute_batch
+from psycopg2.extras import execute_values
 
 logger = logging.getLogger(__name__)
+
+
+def _nullable(value):
+    """NaN/NA to None, so missing sensor values are stored as NULL instead of NaN."""
+    return None if pd.isna(value) else value
 
 
 @dataclass
@@ -124,32 +129,14 @@ class TrackProcessor:
                 # Calculate time gaps between consecutive points (in minutes)
                 box_data["time_gap"] = box_data["timestamp"].diff().dt.total_seconds() / 60
                 
-                # Calculate distance between consecutive points using Haversine
-                from math import radians, cos, sin, asin, sqrt
-                
-                def haversine_distance(lat1, lon1, lat2, lon2):
-                    """Distance in meters between two lat/lon points."""
-                    lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
-                    dlon = lon2 - lon1
-                    dlat = lat2 - lat1
-                    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                    c = 2 * asin(sqrt(a))
-                    r = 6371000  # Radius of earth in meters
-                    return c * r
-                
-                distances = []
-                for i in range(len(box_data)):
-                    if i == 0:
-                        distances.append(0)
-                    else:
-                        dist = haversine_distance(
-                            box_data["latitude"].iloc[i-1],
-                            box_data["longitude"].iloc[i-1],
-                            box_data["latitude"].iloc[i],
-                            box_data["longitude"].iloc[i]
-                        )
-                        distances.append(dist)
-                
+                # Distance between consecutive points (Haversine, meters)
+                lat = np.radians(box_data["latitude"].to_numpy(dtype=float))
+                lon = np.radians(box_data["longitude"].to_numpy(dtype=float))
+                a = (
+                    np.sin(np.diff(lat) / 2) ** 2
+                    + np.cos(lat[:-1]) * np.cos(lat[1:]) * np.sin(np.diff(lon) / 2) ** 2
+                )
+                distances = np.concatenate(([0.0], 2 * 6371000 * np.arcsin(np.sqrt(a))))
                 box_data["distance"] = distances
                 
                 # Calculate implied speed (m/s)
@@ -327,26 +314,29 @@ class TrackProcessor:
                         continue
                     track_id = row[0]
                     
-                    # Insert track points
+                    # Insert track points in batches
                     track_gdf = track_gdf.sort_values("timestamp")
-                    for seq, (_, row) in enumerate(track_gdf.iterrows()):
-                        cursor.execute("""
-                            INSERT INTO track_points (
-                                track_id, "boxId", "timestamp", "sequence",
-                                longitude, latitude, geometry,
-                                "speed_ms", "temperature", "humidity", "pm25", "pm10",
-                                "overtaking_distance", "distance_right"
-                            ) VALUES (%s, %s, %s, %s, %s, %s, 
-                                      ST_GeomFromText(%s, 4326), %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            track_id, row["boxId"], row["timestamp"], seq,
-                            row["longitude"], row["latitude"],
-                            f"SRID=4326;POINT({row['longitude']} {row['latitude']})",
-                            row.get("Speed"), row.get("Temperature"),
-                            row.get("humidity"), row.get("pm25"), row.get("pm10"),
-                            row.get("overtaking_distance"), row.get("distance_right")
-                        ))
-                    
+                    points = [
+                        (
+                            track_id, row.boxId, row.timestamp, seq,
+                            row.longitude, row.latitude,
+                            f"SRID=4326;POINT({row.longitude} {row.latitude})",
+                            _nullable(row.Speed), _nullable(row.Temperature),
+                            _nullable(row.humidity), _nullable(row.pm25), _nullable(row.pm10),
+                            _nullable(row.overtaking_distance), _nullable(row.distance_right),
+                        )
+                        for seq, row in enumerate(track_gdf.itertuples(index=False))
+                    ]
+                    execute_values(cursor, """
+                        INSERT INTO track_points (
+                            track_id, "boxId", "timestamp", "sequence",
+                            longitude, latitude, geometry,
+                            "speed_ms", "temperature", "humidity", "pm25", "pm10",
+                            "overtaking_distance", "distance_right"
+                        ) VALUES %s
+                    """, points, template="(%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s, %s, %s, %s, %s, %s, %s)",
+                        page_size=1000)
+
                     conn.commit()
                     stored_count += 1
                     logger.info(f"Stored track for {stats.box_id}: {stats.distance_meters:.0f}m, {stats.duration_seconds:.0f}s")
@@ -365,6 +355,7 @@ class TrackProcessor:
         
         Returns number of tracks stored.
         """
+        conn = None
         try:
             conn = psycopg2.connect(self.connection_string)
             
@@ -383,11 +374,11 @@ class TrackProcessor:
                 return 0
             
             logger.info(f"Storing {len(tracks)} tracks to database...")
-            count = self.store_tracks(tracks, conn)
-            
-            conn.close()
-            return count
+            return self.store_tracks(tracks, conn)
             
         except Exception as e:
             logger.error(f"Track processing failed: {e}", exc_info=True)
             return 0
+        finally:
+            if conn is not None:
+                conn.close()

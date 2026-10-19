@@ -162,32 +162,38 @@ def sync_sensor_data_job() -> Dict[str, Any]:
         tracks_stored = track_processor.process()
         logger.info(f"Track processing completed. Stored {tracks_stored} tracks")
 
-        # Trigger analysis pipeline via the API for each synced grouptag
-        api_url = os.getenv("PYGEOAPI_URL", "")  # reusing env var; points to the app service
-        int_api_token = os.getenv("INT_API_TOKEN", "")
-        if api_url and int_api_token:
-            import requests as req
-            logger.info(f"Triggering analysis pipeline for grouptags: {grouptags}")
-            for grouptag in grouptags:
-                try:
-                    resp = req.post(
-                        f"{api_url}/analyze",
-                        json={
-                            "campaigns": [grouptag],
-                            "processes": "all",
-                        },
-                        timeout=7200,
-                    )
-                    resp.raise_for_status()
-                    logger.info(f"Analysis pipeline triggered for grouptag '{grouptag}'")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to trigger analysis for grouptag '{grouptag}': {e}"
-                    )
-        else:
-            logger.info(
-                "PYGEOAPI_URL or INT_API_TOKEN not set — skipping analysis trigger"
+        # Refresh planner statistics after the bulk writes
+        analyze_tables = ["osem_bike_data", "tracks", "track_points"]
+        if home_devices_configured:
+            analyze_tables.append(home_table)
+        try:
+            database.analyze(analyze_tables)
+            logger.info(f"Refreshed table statistics: {analyze_tables}")
+        except Exception as e:
+            logger.warning(f"Could not refresh table statistics: {e}")
+
+        # Run the analysis pipeline for each synced grouptag. Each process runs
+        # in its own subprocess, one at a time (see src/analysis.py).
+        if os.getenv("RUN_ANALYSIS", "true").lower() in ("1", "true", "yes"):
+            from src.analysis import AVAILABLE_PROCESSES, run_analysis
+
+            logger.info(f"Running analysis pipeline for grouptags: {grouptags}")
+            failed = []
+
+            def on_result(campaign: str, proc_name: str, outcome: str) -> None:
+                if outcome == "failed":
+                    failed.append(f"{campaign}/{proc_name}")
+
+            run_analysis(
+                grouptags,
+                AVAILABLE_PROCESSES,
+                refresh_road_network=False,
+                on_result=on_result,
             )
+            if failed:
+                logger.warning(f"Analysis processes failed: {failed}")
+        else:
+            logger.info("RUN_ANALYSIS disabled — skipping analysis pipeline")
 
         # Calculate execution time
         end_time = datetime.now(timezone.utc)

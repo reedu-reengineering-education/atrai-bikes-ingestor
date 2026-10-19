@@ -30,21 +30,19 @@ class DatabaseManager:
         self.pool = SimpleConnectionPool(min_connections, max_connections, connection_string)
 
     def _create_indexes(self, cursor, table_name: str):
-        """Create the standard boxId/createdAt/geometry indexes for a measurements table."""
+        """
+        Create the createdAt/geometry indexes for a measurements table.
+
+        No separate boxId or (boxId, createdAt) index: the UNIQUE("boxId",
+        "createdAt") constraint's index already covers both, and extra indexes
+        only slow down the upserts (see migrations/006_drop_redundant_indexes.sql).
+        """
         table = sql.Identifier(table_name)
         idx_prefix = re.sub(r'[^A-Za-z0-9_]', '_', table_name)
 
         cursor.execute(sql.SQL(
-            "CREATE INDEX IF NOT EXISTS {idx} ON {table}(\"boxId\");"
-        ).format(idx=sql.Identifier(f"idx_{idx_prefix}_boxid"), table=table))
-
-        cursor.execute(sql.SQL(
             "CREATE INDEX IF NOT EXISTS {idx} ON {table}(\"createdAt\");"
         ).format(idx=sql.Identifier(f"idx_{idx_prefix}_timestamp"), table=table))
-
-        cursor.execute(sql.SQL(
-            "CREATE INDEX IF NOT EXISTS {idx} ON {table}(\"boxId\", \"createdAt\");"
-        ).format(idx=sql.Identifier(f"idx_{idx_prefix}_boxid_timestamp"), table=table))
 
         cursor.execute(sql.SQL(
             "CREATE INDEX IF NOT EXISTS {idx} ON {table} USING GIST (geometry);"
@@ -384,6 +382,24 @@ class DatabaseManager:
                 result = cursor.fetchone()
                 return result[0] if result else None
         finally:
+            self.pool.putconn(conn)
+
+    def analyze(self, table_names: List[str]):
+        """
+        Refresh planner statistics for the given tables.
+
+        Postgres loses its statistics after a crash and autovacuum only
+        recomputes them once enough rows change, so without this the planner
+        can be left estimating a few thousand rows for a table of millions.
+        """
+        conn = self.pool.getconn()
+        try:
+            conn.autocommit = True
+            with conn.cursor() as cursor:
+                for table_name in table_names:
+                    cursor.execute(sql.SQL("ANALYZE {table};").format(table=sql.Identifier(table_name)))
+        finally:
+            conn.autocommit = False
             self.pool.putconn(conn)
 
     def close(self):

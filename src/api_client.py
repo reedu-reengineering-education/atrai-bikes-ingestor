@@ -7,6 +7,7 @@ from the OpenSenseMap API and archive service.
 
 import re
 import time
+from datetime import date, datetime
 from typing import List, Optional, Dict
 import requests
 from dataclasses import dataclass
@@ -27,6 +28,10 @@ class Box:
     # no per-measurement GPS sensor). None for boxes without a known location.
     longitude: Optional[float] = None
     latitude: Optional[float] = None
+    # Activity bounds from the OpenSenseMap API, used to limit which archive
+    # days are requested. None when the API doesn't report them.
+    created_date: Optional[date] = None
+    last_measurement_date: Optional[date] = None
 
 
 class OpenSenseMapClient:
@@ -35,6 +40,10 @@ class OpenSenseMapClient:
     API_BASE_URL = "https://api.opensensemap.org"
     ARCHIVE_BASE_URL = "https://archive.opensensemap.org"
     
+    # (connect, read) timeout in seconds. Without it a stalled connection
+    # blocks the sync forever.
+    REQUEST_TIMEOUT = (10, 120)
+
     def __init__(self, max_retries: int = 3, initial_delay: float = 1.0, max_delay: float = 60.0):
         """
         Initialize the OpenSenseMap client.
@@ -72,6 +81,36 @@ class OpenSenseMapClient:
         except (TypeError, ValueError):
             return None, None
 
+    @staticmethod
+    def _parse_date(value) -> Optional[date]:
+        """Parse an API timestamp (e.g. '2024-05-01T12:00:00.000Z') to a UTC date."""
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+
+    def _box_from_api(self, box_data: Dict, fallback_id: str = "") -> Optional[Box]:
+        """Build a Box from an API box object, or None if it lacks an id or name."""
+        box_id = box_data.get("_id", fallback_id)
+        box_name = box_data.get("name", "")
+        if not box_id or not box_name:
+            return None
+
+        grouptags = box_data.get("grouptag", [])
+        longitude, latitude = self._parse_location(box_data)
+        return Box(
+            id=box_id,
+            name=box_name,
+            sanitized_name=self.sanitize_name(box_name),
+            grouptags=grouptags if isinstance(grouptags, list) else [],
+            longitude=longitude,
+            latitude=latitude,
+            created_date=self._parse_date(box_data.get("createdAt")),
+            last_measurement_date=self._parse_date(box_data.get("lastMeasurementAt")),
+        )
+
     def _request_with_retry(self, method: str, url: str, **kwargs) -> Optional[requests.Response]:
         """
         Make an HTTP request with retry logic and exponential backoff.
@@ -88,6 +127,7 @@ class OpenSenseMapClient:
         
         for attempt in range(self.max_retries):
             try:
+                kwargs.setdefault("timeout", self.REQUEST_TIMEOUT)
                 response = self.session.request(method, url, **kwargs)
                 
                 # Handle 404 gracefully - missing data is expected
@@ -150,21 +190,9 @@ class OpenSenseMapClient:
         boxes = []
         
         for box_data in boxes_data:
-            box_id = box_data.get("_id", "")
-            box_name = box_data.get("name", "")
-            grouptags = box_data.get("grouptag", [])
-            
-            if box_id and box_name:
-                sanitized_name = self.sanitize_name(box_name)
-                longitude, latitude = self._parse_location(box_data)
-                boxes.append(Box(
-                    id=box_id,
-                    name=box_name,
-                    sanitized_name=sanitized_name,
-                    grouptags=grouptags if isinstance(grouptags, list) else [],
-                    longitude=longitude,
-                    latitude=latitude,
-                ))
+            box = self._box_from_api(box_data)
+            if box is not None:
+                boxes.append(box)
 
         return boxes
 
@@ -189,25 +217,7 @@ class OpenSenseMapClient:
         if response is None:
             return None
 
-        box_data = response.json()
-
-        resolved_id = box_data.get("_id", box_id)
-        box_name = box_data.get("name", "")
-
-        if not resolved_id or not box_name:
-            return None
-
-        grouptags = box_data.get("grouptag", [])
-        longitude, latitude = self._parse_location(box_data)
-
-        return Box(
-            id=resolved_id,
-            name=box_name,
-            sanitized_name=self.sanitize_name(box_name),
-            grouptags=grouptags if isinstance(grouptags, list) else [],
-            longitude=longitude,
-            latitude=latitude,
-        )
+        return self._box_from_api(response.json(), fallback_id=box_id)
 
     def fetch_archive_metadata(self, box_id: str, sanitized_name: str, date: str) -> Optional[Dict]:
         """
@@ -222,7 +232,7 @@ class OpenSenseMapClient:
             Dictionary containing metadata, or None if not found
         """
         url = f"{self.ARCHIVE_BASE_URL}/{date}/{box_id}-{sanitized_name}/{sanitized_name}-{date}.json"
-        logger.info(f"Fetching metadata from {url}")
+        logger.debug(f"Fetching metadata from {url}")
         
         response = self._request_with_retry("GET", url)
         
